@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
       options: {
         emailRedirectTo: redirectUrl,
         data: {
+          role: 'mentor',
           mentor_id: mentor.mentor_id,
           mentor_name: mentor.Name
         }

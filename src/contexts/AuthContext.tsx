@@ -15,7 +15,11 @@ export interface MentorUser {
   email: string
   mentorId?: number
   name?: string
+  role?: string
 }
+
+// Expected role for this dashboard
+const REQUIRED_ROLE = 'mentor'
 
 interface AuthContextType {
   user: MentorUser | null
@@ -34,8 +38,15 @@ function userToMentor(user: User | null): MentorUser | null {
     id: user.id,
     email: user.email || '',
     mentorId: user.user_metadata?.mentor_id,
-    name: user.user_metadata?.mentor_name || user.user_metadata?.full_name || user.email?.split('@')[0]
+    name: user.user_metadata?.mentor_name || user.user_metadata?.full_name || user.email?.split('@')[0],
+    role: user.user_metadata?.role
   }
+}
+
+// Check if user has the correct role for this dashboard
+function hasValidRole(user: User | null): boolean {
+  if (!user) return false
+  return user.user_metadata?.role === REQUIRED_ROLE
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -65,6 +76,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const result = await Promise.race([sessionPromise, timeoutPromise]) as any
         
         if (!isCancelled && result?.data?.session) {
+          // Check if user has the correct role
+          if (!hasValidRole(result.data.session.user)) {
+            console.warn('User does not have mentor role, signing out')
+            await supabaseB.auth.signOut()
+            setSession(null)
+            setUser(null)
+            return
+          }
           setSession(result.data.session)
           setUser(userToMentor(result.data.session.user))
         }
@@ -80,10 +99,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initAuth()
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabaseB.auth.onAuthStateChange((event, newSession) => {
+    const { data: { subscription } } = supabaseB.auth.onAuthStateChange(async (event, newSession) => {
       if (isCancelled) return
       
       console.log('Auth event:', event)
+      
+      // Check role on sign in
+      if (newSession && !hasValidRole(newSession.user)) {
+        console.warn('User does not have mentor role, signing out')
+        await supabaseB.auth.signOut()
+        setSession(null)
+        setUser(null)
+        setLoading(false)
+        return
+      }
+      
       setSession(newSession)
       setUser(userToMentor(newSession?.user || null))
       setLoading(false)
