@@ -402,10 +402,14 @@ export async function POST(request: NextRequest) {
       .update({ day: newDayName })
       .eq('id', sessionId)
 
-    // Update meeting link (either new one or clear it)
+    // Update meeting link (either new one or clear it) and reset notification flags
     await supabaseB
       .from(tableName)
-      .update({ teams_meeting_link: newMeetingLink })
+      .update({ 
+        teams_meeting_link: newMeetingLink,
+        email_sent: false,
+        whatsapp_sent: false
+      })
       .eq('id', sessionId)
 
     // Update time if provided
