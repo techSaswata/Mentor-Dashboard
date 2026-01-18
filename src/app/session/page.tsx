@@ -379,11 +379,11 @@ function SessionDetailsPage() {
     const confirmDelete = confirm('Are you sure you want to delete this material?')
     if (!confirmDelete) return
 
+    const linkToDelete = session.materialLinks[indexToDelete]
+    if (!linkToDelete) return
+
     setDeletingMaterialIndex(indexToDelete)
     try {
-      // Get remaining links after removing the one at indexToDelete
-      const remainingLinks = session.materialLinks.filter((_, idx) => idx !== indexToDelete)
-      
       const response = await fetch('/api/mentor/session-material', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -391,7 +391,7 @@ function SessionDetailsPage() {
           tableName,
           date,
           time,
-          materials: remainingLinks.join(',')
+          linkToDelete
         })
       })
 

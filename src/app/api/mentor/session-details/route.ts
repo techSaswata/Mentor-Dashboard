@@ -55,12 +55,27 @@ export async function GET(request: NextRequest) {
 
     console.log('Found session:', session.id)
 
-    // Parse materials
-    const materials = session.initial_session_material || ''
-    const materialLinks = materials
+    // Parse links from initial_session_material
+    const initialMaterials = session.initial_session_material || ''
+    const initialLinks = initialMaterials
       .split(',')
       .map((link: string) => link.trim())
       .filter((link: string) => link.length > 0)
+
+    // Parse links from session_material
+    const sessionMaterials = session.session_material || ''
+    const sessionLinks = sessionMaterials
+      .split(',')
+      .map((link: string) => link.trim())
+      .filter((link: string) => link.length > 0)
+
+    // Merge both, avoiding duplicates
+    const materialLinks = [...initialLinks]
+    for (const link of sessionLinks) {
+      if (!materialLinks.includes(link)) {
+        materialLinks.push(link)
+      }
+    }
 
     return NextResponse.json({
       session: {
