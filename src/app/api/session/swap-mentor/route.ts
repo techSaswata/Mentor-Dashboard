@@ -353,6 +353,117 @@ function buildNewMentorWhatsAppComponents(params: {
   ]
 }
 
+// Generate email HTML for students about mentor change
+function generateMentorChangeEmailForStudent(params: {
+  studentName: string
+  cohortName: string
+  sessionDate: string
+  sessionTime: string
+  subjectName: string
+  newMentorName: string
+  meetingLink: string
+}): string {
+  const { studentName, cohortName, sessionDate, sessionTime, subjectName, newMentorName, meetingLink } = params
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mentor Changed - MentiBY</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4;">
+  <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; margin-top: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+    
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #8b5cf6, #6366f1); padding: 30px; text-align: center;">
+      <h1 style="color: white; margin: 0; font-size: 28px;">
+        🔔 Mentor Changed
+      </h1>
+      <p style="color: rgba(255,255,255,0.9); margin-top: 8px; font-size: 14px;">Your upcoming class has a new mentor</p>
+    </div>
+    
+    <!-- Content -->
+    <div style="padding: 30px;">
+      <h2 style="color: #333; margin-top: 0;">Hi ${studentName || 'Student'}! 👋</h2>
+      
+      <p style="color: #666; font-size: 16px; line-height: 1.6;">
+        Your upcoming <strong>${subjectName}</strong> class for <strong>${cohortName}</strong> will now be conducted by a different mentor.
+      </p>
+      
+      <!-- Session Details Card -->
+      <div style="background: linear-gradient(135deg, #ede9fe, #ddd6fe); border-radius: 12px; padding: 20px; margin: 20px 0; border-left: 4px solid #8b5cf6;">
+        <h3 style="color: #5b21b6; margin-top: 0; margin-bottom: 15px;">📋 Session Details</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 0; color: #5b21b6; font-weight: 600; width: 35%;">📅 Date:</td>
+            <td style="padding: 8px 0; color: #4c1d95;">${sessionDate}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #5b21b6; font-weight: 600;">⏰ Time:</td>
+            <td style="padding: 8px 0; color: #4c1d95;">${sessionTime}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #5b21b6; font-weight: 600;">📚 Subject:</td>
+            <td style="padding: 8px 0; color: #4c1d95;">${subjectName}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #5b21b6; font-weight: 600;">👨‍🏫 New Mentor:</td>
+            <td style="padding: 8px 0; color: #4c1d95; font-weight: bold;">${newMentorName}</td>
+          </tr>
+        </table>
+      </div>
+      
+      ${meetingLink ? `
+      <!-- Join Button -->
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${meetingLink}" style="display: inline-block; background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: white; text-decoration: none; padding: 14px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 12px rgba(139,92,246,0.4);">
+          🎥 Join Session
+        </a>
+      </div>
+      ` : ''}
+      
+      <p style="color: #666; font-size: 14px; text-align: center; margin-top: 20px;">
+        The class schedule remains the same. See you there!
+      </p>
+    </div>
+    
+    <!-- Footer -->
+    <div style="background: #1f2937; padding: 20px; text-align: center;">
+      <p style="color: #9ca3af; margin: 0; font-size: 12px;">
+        © 2025 MentiBY. All rights reserved.
+      </p>
+    </div>
+  </div>
+</body>
+</html>
+  `
+}
+
+// Build WhatsApp template components for student mentor change notification
+function buildStudentMentorChangeWhatsAppComponents(params: {
+  studentName: string
+  cohortName: string
+  sessionDate: string
+  sessionTime: string
+  newMentorName: string
+}): any[] {
+  // Template: "Hi {{1}}, your {{2}} class on {{3}} at {{4}} will now be conducted by {{5}}."
+  return [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: params.studentName },
+        { type: 'text', text: params.cohortName },
+        { type: 'text', text: params.sessionDate },
+        { type: 'text', text: params.sessionTime },
+        { type: 'text', text: params.newMentorName }
+      ]
+    }
+  ]
+}
+
 // POST /api/session/swap-mentor - Swap mentor for a session
 export async function POST(request: NextRequest) {
   try {
@@ -408,10 +519,57 @@ export async function POST(request: NextRequest) {
       newMentor = mentor
     }
 
-    // Update the swapped_mentor_id
+    // Check if meeting link exists - if so, create a new one with new mentor
+    let newMeetingLink: string | null = session.teams_meeting_link
+    if (session.teams_meeting_link && swappedMentorId && newMentor) {
+      console.log('Existing meeting link found, creating new meeting with new mentor...')
+      try {
+        // Calculate meeting times
+        const sessionDuration = 60 // 1 hour default
+        const startDateTime = `${session.date}T${session.time}`
+        const endDateTime = new Date(new Date(startDateTime).getTime() + sessionDuration * 60000).toISOString()
+
+        // Parse cohort info for meeting subject
+        const cohortMatch = tableName.match(/^([a-zA-Z]+)(\d+)_(\d+)_schedule$/)
+        const cohortName = cohortMatch 
+          ? `${cohortMatch[1].charAt(0).toUpperCase() + cohortMatch[1].slice(1)} ${cohortMatch[2]}.${cohortMatch[3]}`
+          : tableName.replace('_schedule', '')
+
+        const meetingSubject = `${cohortName} - ${session.subject_name || 'Session'} (${newMentor?.Name || 'Mentor'})`
+
+        // Create new Teams meeting
+        const meetingResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/teams/create-meeting`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subject: meetingSubject,
+            startDateTime,
+            endDateTime,
+            timeZone: 'Asia/Kolkata'
+          })
+        })
+
+        if (meetingResponse.ok) {
+          const meetingData = await meetingResponse.json()
+          newMeetingLink = meetingData.joinUrl
+          console.log('New meeting created with new mentor:', newMeetingLink)
+        } else {
+          console.error('Failed to create new meeting')
+        }
+      } catch (meetingError) {
+        console.error('Error creating new meeting:', meetingError)
+      }
+    }
+
+    // Update the swapped_mentor_id and meeting link
+    const updateData: Record<string, any> = { swapped_mentor_id: swappedMentorId || null }
+    if (newMeetingLink !== session.teams_meeting_link) {
+      updateData.teams_meeting_link = newMeetingLink
+    }
+
     const { error } = await supabaseB
       .from(tableName)
-      .update({ swapped_mentor_id: swappedMentorId || null })
+      .update(updateData)
       .eq('id', sessionId)
 
     if (error) {
@@ -422,8 +580,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Only send notifications if actually swapping (not removing swap)
-    if (swappedMentorId && newMentor) {
+    // Check if notifications were already sent
+    const emailAlreadySent = session.email_sent === true
+    const whatsappAlreadySent = session.whatsapp_sent === true
+    const shouldSendNotifications = emailAlreadySent || whatsappAlreadySent
+
+    // Only send notifications if actually swapping (not removing swap) AND notifications were previously sent
+    if (swappedMentorId && newMentor && shouldSendNotifications) {
+      console.log('Original notifications were sent, sending swap update notifications...')
       // Fetch all super mentors from main database
       const { data: superMentors, error: smError } = await supabaseMain
         .from('supermentor_details')
@@ -560,7 +724,7 @@ export async function POST(request: NextRequest) {
           subjectName: session.subject_name || 'Session',
           subjectTopic: session.subject_topic || '',
           originalMentorName: originalMentor?.Name || 'Unknown',
-          meetingLink: session.teams_meeting_link || ''
+          meetingLink: newMeetingLink || session.teams_meeting_link || ''
         })
 
         const sent = await sendEmail({
@@ -586,7 +750,7 @@ export async function POST(request: NextRequest) {
           sessionDate: formattedSessionDate,
           sessionTime: formattedSessionTime,
           subjectName: session.subject_name || 'Session',
-          meetingLink: session.teams_meeting_link || 'Check Dashboard'
+          meetingLink: newMeetingLink || session.teams_meeting_link || 'Check Dashboard'
         })
 
         const waSent = await sendWhatsAppMessage({
@@ -599,11 +763,93 @@ export async function POST(request: NextRequest) {
           console.log(`✅ Assignment WhatsApp sent to new mentor: ${newMentorPhone}`)
         }
       }
+
+      // ============ SEND UPDATE NOTIFICATIONS TO STUDENTS ============
+      // Parse cohort info for fetching students
+      const cohortInfoMatch = tableName.match(/^([a-zA-Z]+)(\d+)_(\d+)_schedule$/)
+      if (cohortInfoMatch) {
+        const cohortType = cohortInfoMatch[1].charAt(0).toUpperCase() + cohortInfoMatch[1].slice(1).toLowerCase()
+        const cohortNumber = `${cohortInfoMatch[2]}.${cohortInfoMatch[3]}`
+
+        const { data: students, error: studentsError } = await supabaseMain
+          .from('onboarding')
+          .select('Name, Email, Phone')
+          .eq('Cohort Type', cohortType)
+          .eq('Cohort Number', cohortNumber)
+
+        if (studentsError) {
+          console.error('Error fetching students:', studentsError)
+        }
+
+        if (students && students.length > 0) {
+          console.log(`Sending mentor change notifications to ${students.length} students`)
+
+          let studentEmailsSent = 0
+          let studentWASent = 0
+
+          for (const student of students) {
+            // Email to students about mentor change
+            if (student.Email && student.Email.includes('@')) {
+              const studentEmailHtml = generateMentorChangeEmailForStudent({
+                studentName: student.Name,
+                cohortName: cohortDisplay,
+                sessionDate: formattedSessionDate,
+                sessionTime: formattedSessionTime,
+                subjectName: session.subject_name || 'Session',
+                newMentorName: newMentor?.Name || 'New Mentor',
+                meetingLink: newMeetingLink || session.teams_meeting_link || ''
+              })
+
+              const sent = await sendEmail({
+                to: student.Email,
+                subject: `🔔 Mentor Changed: ${cohortDisplay} - ${session.subject_name || 'Session'}`,
+                html: studentEmailHtml
+              })
+
+              if (sent) {
+                studentEmailsSent++
+              }
+            }
+
+            // WhatsApp to students about mentor change
+            const phone = formatPhoneForWhatsApp(student.Phone)
+            if (phone) {
+              const STUDENT_SWAP_WA_TEMPLATE = process.env.WHATSAPP_STUDENT_SWAP_TEMPLATE || 'mentor_changed_student'
+              
+              const waComponents = buildStudentMentorChangeWhatsAppComponents({
+                studentName: student.Name || 'Student',
+                cohortName: cohortDisplay,
+                sessionDate: formattedSessionDate,
+                sessionTime: formattedSessionTime,
+                newMentorName: newMentor?.Name || 'New Mentor'
+              })
+
+              const waSent = await sendWhatsAppMessage({
+                to: phone,
+                templateName: STUDENT_SWAP_WA_TEMPLATE,
+                components: waComponents
+              })
+
+              if (waSent) {
+                studentWASent++
+              }
+            }
+
+            // Rate limit: 100ms between student messages
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+
+          console.log(`✅ Student notifications: ${studentEmailsSent} emails, ${studentWASent} WhatsApp`)
+        }
+      }
+    } else if (swappedMentorId && newMentor && !shouldSendNotifications) {
+      console.log('Original notifications not yet sent, skipping update notifications to students')
     }
 
     return NextResponse.json({ 
       success: true, 
-      message: swappedMentorId ? 'Mentor swapped successfully' : 'Mentor swap removed'
+      message: swappedMentorId ? 'Mentor swapped successfully' : 'Mentor swap removed',
+      newMeetingLink: newMeetingLink !== session.teams_meeting_link ? newMeetingLink : undefined
     })
 
   } catch (error: any) {
