@@ -501,6 +501,85 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // ============ CHECK FOR SCHEDULE CONFLICTS ============
+    let hasConflict = false
+    let conflictDetails: { tableName: string; batchName: string; subjectName: string }[] = []
+
+    if (swappedMentorId) {
+      const sessionDate = session.date
+      const sessionTime = session.time
+
+      // Get all schedule tables
+      const { data: tables, error: tablesError } = await supabaseB.rpc('get_schedule_tables')
+
+      if (!tablesError && tables && tables.length > 0) {
+        console.log(`Checking ${tables.length} tables for conflicts...`)
+
+        for (const table of tables) {
+          const checkTableName = table.table_name
+
+          // Query for any session where this mentor (original or swapped) has a class at same date-time
+          const { data: conflicts, error: conflictError } = await supabaseB
+            .from(checkTableName)
+            .select('id, subject_name, mentor_id, swapped_mentor_id')
+            .eq('date', sessionDate)
+            .eq('time', sessionTime)
+
+          if (conflictError) {
+            console.error(`Error checking conflicts in ${checkTableName}:`, conflictError)
+            continue
+          }
+
+          if (conflicts && conflicts.length > 0) {
+            // Check if swappedMentorId is either the original or swapped mentor in any of these sessions
+            for (const conflict of conflicts) {
+              // Skip if it's the same session we're trying to swap
+              if (checkTableName === tableName && conflict.id === sessionId) {
+                continue
+              }
+
+              const isOriginalMentor = conflict.mentor_id === swappedMentorId
+              const isSwappedMentor = conflict.swapped_mentor_id === swappedMentorId
+
+              // If mentor is original but has been swapped away, they're free
+              const isSwappedAway = isOriginalMentor && conflict.swapped_mentor_id !== null
+
+              if ((isOriginalMentor && !isSwappedAway) || isSwappedMentor) {
+                hasConflict = true
+                // Format batch name from table name
+                const batchMatch = checkTableName.match(/^([a-zA-Z]+)(\d+)_(\d+)_schedule$/)
+                const batchName = batchMatch 
+                  ? `${batchMatch[1].charAt(0).toUpperCase() + batchMatch[1].slice(1)} ${batchMatch[2]}.${batchMatch[3]}`
+                  : checkTableName.replace('_schedule', '')
+
+                conflictDetails.push({
+                  tableName: checkTableName,
+                  batchName,
+                  subjectName: conflict.subject_name || 'Session'
+                })
+              }
+            }
+          }
+        }
+
+        if (hasConflict) {
+          console.log(`Conflict found for mentor ${swappedMentorId}:`, conflictDetails)
+          // Block the swap - return error with conflict details
+          const conflictList = conflictDetails
+            .map(c => `${c.batchName} - ${c.subjectName}`)
+            .join(', ')
+          return NextResponse.json(
+            { 
+              error: `Schedule conflict! This mentor already has classes at the same time: ${conflictList}`,
+              hasConflict: true,
+              conflictDetails
+            },
+            { status: 409 } // 409 Conflict
+          )
+        }
+      }
+    }
+
     // Fetch original mentor details
     const { data: originalMentor } = await supabaseB
       .from('Mentor Details')
@@ -565,6 +644,9 @@ export async function POST(request: NextRequest) {
     const updateData: Record<string, any> = { swapped_mentor_id: swappedMentorId || null }
     if (newMeetingLink !== session.teams_meeting_link) {
       updateData.teams_meeting_link = newMeetingLink
+      // Reset notification flags so scheduler can send new notifications
+      updateData.email_sent = false
+      updateData.whatsapp_sent = false
     }
 
     const { error } = await supabaseB

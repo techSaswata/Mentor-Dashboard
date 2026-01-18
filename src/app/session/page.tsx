@@ -188,7 +188,15 @@ function SessionDetailsPage() {
         setShowSwapMentor(false)
         setSelectedMentorId(null)
       } else {
-        alert(data.error || 'Failed to swap mentor')
+        // Check if it's a conflict error
+        if (data.hasConflict && data.conflictDetails) {
+          const conflictList = data.conflictDetails
+            .map((c: { batchName: string; subjectName: string }) => `${c.batchName} - ${c.subjectName}`)
+            .join('\n')
+          alert(`❌ Cannot swap mentor!\n\nThis mentor already has classes at the same time:\n${conflictList}`)
+        } else {
+          alert(data.error || 'Failed to swap mentor')
+        }
       }
     } catch (err) {
       console.error('Error swapping mentor:', err)
