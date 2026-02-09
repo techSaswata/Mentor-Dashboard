@@ -279,7 +279,7 @@ async function createTeamsMeeting(
   console.log(`  Creating meeting: ${subject}`)
   console.log(`  Start: ${startDateTime}, End: ${endDateTime}`)
 
-  // STEP 1: Create standalone online meeting with lobby bypass + auto-recording
+  // STEP 1: Create standalone online meeting with lobby bypass + auto-recording + organizer-only presenter
   const meetingBody = {
     subject,
     startDateTime: new Date(startDateTime).toISOString(),
@@ -289,6 +289,7 @@ async function createTeamsMeeting(
       isDialInBypassEnabled: true
     },
     autoAdmittedUsers: 'everyone',
+    allowedPresenters: 'organizer',
     recordAutomatically: true,
     isEntryExitAnnounced: false,
     allowMeetingChat: 'enabled',

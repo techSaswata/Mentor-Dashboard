@@ -40,7 +40,7 @@ async function getAccessToken(): Promise<string> {
   return data.access_token
 }
 
-// Create Teams meeting via calendar event (creates chat automatically)
+// Create Teams meeting (3-step: online meeting → PATCH mic/camera → calendar event with chat)
 async function createTeamsMeetingWithChat(
   accessToken: string,
   subject: string,
@@ -53,9 +53,74 @@ async function createTeamsMeetingWithChat(
     throw new Error('MS_ORGANIZER_USER_ID not configured')
   }
 
-  const url = `${MS_GRAPH_API_URL}/users/${organizerUserId}/events`
+  console.log(`Creating meeting with chat for: ${subject}`)
+  if (attendeeEmails.length > 0) {
+    console.log(`  Attendees: ${attendeeEmails.join(', ')}`)
+  }
 
-  // Build attendees list (mentor + any other attendees)
+  // STEP 1: Create standalone online meeting with lobby bypass + auto-recording + organizer-only presenter
+  const meetingBody = {
+    subject,
+    startDateTime: new Date(startDateTime).toISOString(),
+    endDateTime: new Date(endDateTime).toISOString(),
+    lobbyBypassSettings: { scope: 'everyone', isDialInBypassEnabled: true },
+    autoAdmittedUsers: 'everyone',
+    allowedPresenters: 'organizer',
+    recordAutomatically: true,
+    isEntryExitAnnounced: false,
+    allowMeetingChat: 'enabled',
+    allowTeamworkReactions: true
+  }
+
+  const meetingResponse = await fetch(`${MS_GRAPH_API_URL}/users/${organizerUserId}/onlineMeetings`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(meetingBody)
+  })
+
+  if (!meetingResponse.ok) {
+    const errorText = await meetingResponse.text()
+    console.error('Online meeting creation error:', errorText)
+    throw new Error(`Failed to create online meeting: ${errorText}`)
+  }
+
+  const meetingData = await meetingResponse.json()
+  const joinUrl = meetingData.joinUrl || meetingData.joinWebUrl
+  const onlineMeetingId = meetingData.id
+
+  if (!joinUrl) {
+    console.error('No join URL in response:', JSON.stringify(meetingData, null, 2))
+    throw new Error('Meeting created but no join URL returned')
+  }
+
+  console.log(`  Step 1: Online meeting created with organizer-only presenter + auto-recording`)
+
+  // STEP 2: PATCH to disable attendee mic/camera
+  try {
+    const patchResponse = await fetch(`${MS_GRAPH_API_URL}/users/${organizerUserId}/onlineMeetings/${onlineMeetingId}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        allowAttendeeToEnableMic: false,
+        allowAttendeeToEnableCamera: false
+      })
+    })
+    if (patchResponse.ok) {
+      console.log(`  Step 2: Mic/camera restrictions applied`)
+    } else {
+      console.log(`  Step 2: Warning - mic/camera patch failed`)
+    }
+  } catch (patchError) {
+    console.log(`  Step 2: Warning - patch error`)
+  }
+
+  // STEP 3: Create calendar event linked to the meeting (creates chat)
   const attendees = attendeeEmails
     .filter(email => email && email.trim())
     .map(email => ({
@@ -63,33 +128,19 @@ async function createTeamsMeetingWithChat(
       type: 'required'
     }))
 
-  // Create calendar event with Teams meeting - this creates the chat!
   const eventBody = {
     subject,
-    start: {
-      dateTime: startDateTime,
-      timeZone: 'Asia/Kolkata'
-    },
-    end: {
-      dateTime: endDateTime,
-      timeZone: 'Asia/Kolkata'
-    },
-    // This is the key setting - creates Teams meeting with chat
+    start: { dateTime: startDateTime, timeZone: 'Asia/Kolkata' },
+    end: { dateTime: endDateTime, timeZone: 'Asia/Kolkata' },
     isOnlineMeeting: true,
     onlineMeetingProvider: 'teamsForBusiness',
-    // Add attendees (they'll be part of the chat)
+    onlineMeeting: { joinUrl },
     attendees,
-    // Don't require response
     responseRequested: false,
     allowNewTimeProposals: false
   }
 
-  console.log(`Creating calendar event with chat for: ${subject}`)
-  if (attendees.length > 0) {
-    console.log(`  Attendees: ${attendeeEmails.join(', ')}`)
-  }
-
-  const response = await fetch(url, {
+  const eventResponse = await fetch(`${MS_GRAPH_API_URL}/users/${organizerUserId}/events`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -98,64 +149,10 @@ async function createTeamsMeetingWithChat(
     body: JSON.stringify(eventBody)
   })
 
-  if (!response.ok) {
-    const errorText = await response.text()
+  if (!eventResponse.ok) {
+    const errorText = await eventResponse.text()
     console.error('Calendar event creation error:', errorText)
     throw new Error(`Failed to create calendar event: ${errorText}`)
-  }
-
-  const data = await response.json()
-  
-  // The join URL is in onlineMeeting.joinUrl
-  const joinUrl = data.onlineMeeting?.joinUrl
-  
-  if (!joinUrl) {
-    console.error('No join URL in response:', JSON.stringify(data, null, 2))
-    throw new Error('Meeting created but no join URL returned')
-  }
-
-  // Calendar event API doesn't return meeting ID directly, so we need to query by join URL
-  // Then patch to enable auto-recording
-  try {
-    const encodedUrl = encodeURIComponent(joinUrl)
-    const meetingQueryUrl = `${MS_GRAPH_API_URL}/users/${organizerUserId}/onlineMeetings?$filter=JoinWebUrl eq '${encodedUrl}'`
-    
-    const meetingQueryResponse = await fetch(meetingQueryUrl, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    })
-    
-    if (meetingQueryResponse.ok) {
-      const meetingData = await meetingQueryResponse.json()
-      const onlineMeetingId = meetingData.value?.[0]?.id
-      
-      if (onlineMeetingId) {
-        console.log(`  Found meeting ID: ${onlineMeetingId.substring(0, 30)}...`)
-        
-        const patchUrl = `${MS_GRAPH_API_URL}/users/${organizerUserId}/onlineMeetings/${onlineMeetingId}`
-        const patchResponse = await fetch(patchUrl, {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            recordAutomatically: true
-          })
-        })
-        
-        if (patchResponse.ok) {
-          console.log(`  ✓ Enabled auto-recording for meeting`)
-        } else {
-          console.log(`  Warning: Could not enable auto-recording: ${await patchResponse.text()}`)
-        }
-      } else {
-        console.log(`  Warning: Could not find meeting ID to enable auto-recording`)
-      }
-    } else {
-      console.log(`  Warning: Could not query meeting for auto-recording setup`)
-    }
-  } catch (patchError) {
-    console.log(`  Warning: Failed to setup auto-recording:`, patchError)
   }
 
   console.log(`  Created meeting with chat: ${joinUrl.substring(0, 50)}...`)
@@ -177,16 +174,16 @@ async function createOnlineMeetingFallback(
   const url = `${MS_GRAPH_API_URL}/users/${organizerUserId}/onlineMeetings`
 
   const meetingBody = {
-    startDateTime,
-    endDateTime,
+    startDateTime: new Date(startDateTime).toISOString(),
+    endDateTime: new Date(endDateTime).toISOString(),
     subject,
     lobbyBypassSettings: { 
       scope: 'everyone',
       isDialInBypassEnabled: true 
     },
     autoAdmittedUsers: 'everyone',
-    allowedPresenters: 'everyone',
-    recordAutomatically: true // Auto-start recording when meeting begins
+    allowedPresenters: 'organizer',
+    recordAutomatically: true
   }
 
   const response = await fetch(url, {
